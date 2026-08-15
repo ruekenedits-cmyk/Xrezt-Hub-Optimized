@@ -1,0 +1,485 @@
+-- Xrezt Hub | Obsidian | optimized merge
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Obsidian/refs/heads/main/Library.lua"))()
+
+local Players           = game:GetService("Players")
+local RunService        = game:GetService("RunService")
+local UserInputService  = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService      = game:GetService("TweenService")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera      = workspace.CurrentCamera
+
+-- ==========================================
+-- LOADING
+-- ==========================================
+local Loading = Library:CreateLoading({ Title = "Xrezt Hub", Icon = 95816097006870, TotalSteps = 4 })
+Loading:SetMessage("Initializing...")
+Loading:SetDescription("Waiting for game to load...")
+task.wait(0.5)
+Loading:SetCurrentStep(1); Loading:SetDescription("Loading configuration..."); task.wait(0.5)
+Loading:SetCurrentStep(2); Loading:ShowSidebarPage(true)
+Loading.Sidebar:AddLabel("User: " .. LocalPlayer.Name)
+Loading.Sidebar:AddLabel("Version: v2.5")
+task.wait(0.5)
+Loading:SetCurrentStep(3); Loading:SetDescription("Ready to start!"); task.wait(0.5)
+Loading:SetCurrentStep(4); Loading:Continue()
+
+-- ==========================================
+-- WINDOW
+-- ==========================================
+local Window = Library:CreateWindow({ Title = "Xrezt Hub", Footer = "version: 2.5", NotifySide = "Right" })
+local MainTab     = Window:AddTab("Main", "Home")
+local SettingsTab = Window:AddTab("UI Settings", "settings")
+
+local ThemeManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Obsidian/main/addons/ThemeManager.lua"))()
+ThemeManager:SetLibrary(Library); ThemeManager:SetFolder("XreztHub")
+ThemeManager:ApplyToTab(SettingsTab); ThemeManager:LoadDefault()
+
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Obsidian/main/addons/SaveManager.lua"))()
+SaveManager:SetLibrary(Library); SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({ "MenuKeybind" }); SaveManager:SetFolder("XreztHub")
+SaveManager:BuildConfigSection(SettingsTab)
+
+local LeftGroupBox  = MainTab:AddLeftGroupbox("Combat", "wrench")
+local RightGroupBox = MainTab:AddRightGroupbox("Todo Perfect Swap")
+local DashGroupBox  = MainTab:AddLeftGroupbox("Divergent Dash", "zap")
+
+-- ==========================================
+-- CHARACTER CACHE
+-- ==========================================
+local MyChar, MyRoot, MyHum, MyAnimator
+
+local function bindCharacter(char)
+    MyChar = char
+    MyRoot = char:WaitForChild("HumanoidRootPart", 5)
+    MyHum  = char:WaitForChild("Humanoid", 5)
+    MyAnimator = MyHum and MyHum:FindFirstChildOfClass("Animator")
+end
+if LocalPlayer.Character then bindCharacter(LocalPlayer.Character) end
+
+-- ==========================================
+-- REMOTES
+-- ==========================================
+local Services = ReplicatedStorage:WaitForChild("Knit"):WaitForChild("Knit"):WaitForChild("Services")
+
+local DivergentEvent = Services.DivergentFistService.RE.Activated
+local NanamiRE       = Services.NanamiService.RE
+local NanamiEffects  = NanamiRE.Effects
+local NanamiRight    = NanamiRE.RightActivated
+local TodoRE         = Services:WaitForChild("TodoService"):WaitForChild("RE")
+local TodoRight      = TodoRE:WaitForChild("RightActivated")
+local TodoActivated  = TodoRE:WaitForChild("Activated")
+
+local ReturnSkill
+pcall(function() ReturnSkill = Services.ItadoriService.RE.RightActivated end)
+
+-- ==========================================
+-- LOCK-ON
+-- ==========================================
+local LockOn = {
+    Enabled = false, Target = nil, TargetRoot = nil,
+    UseCamera = true, UseCharacter = true,
+    MaxDistance = 60, CameraOffset = 1.75, LerpFactor = 0.9,
+}
+
+local TargetGroup = workspace:FindFirstChild("Characters") or workspace
+local PlayerGui   = LocalPlayer:WaitForChild("PlayerGui")
+
+local Highlight = Instance.new("Highlight")
+Highlight.Name = "LockOnFullBody"
+Highlight.FillColor = Color3.fromRGB(255, 0, 0)
+Highlight.FillTransparency = 0.85
+Highlight.OutlineColor = Color3.fromRGB(0, 255, 255)
+Highlight.Enabled = false
+Highlight.Parent = PlayerGui
+
+local LockToggle, disableLockOn
+local PHYSICS_STATE  = Enum.HumanoidStateType.Physics
+local PLATFORM_STATE = Enum.HumanoidStateType.PlatformStanding
+
+local function isValidTarget(char)
+    if char == MyChar or not char.Parent then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    if char:GetAttribute("Dead") == true then return false end
+    return char:FindFirstChild("HumanoidRootPart") ~= nil
+end
+
+-- shared nearest-target finder (used by lock-on AND dash) — no GetDescendants
+local function getClosestCharacter(maxDist)
+    if not MyRoot then return nil end
+    local myPos = MyRoot.Position
+    local best, bestSq = nil, (maxDist or LockOn.MaxDistance) ^ 2
+    for _, obj in ipairs(TargetGroup:GetChildren()) do
+        if obj:IsA("Model") and isValidTarget(obj) then
+            local d = myPos - obj.HumanoidRootPart.Position
+            local sq = d.X * d.X + d.Y * d.Y + d.Z * d.Z
+            if sq < bestSq then bestSq, best = sq, obj end
+        end
+    end
+    return best
+end
+
+local function onRenderStep()
+    local target, tRoot = LockOn.Target, LockOn.TargetRoot
+    if not tRoot or not tRoot.Parent or not target.Parent or not MyRoot or not MyHum then
+        disableLockOn(true); return
+    end
+    if LockOn.UseCamera then
+        local camCF = Camera.CFrame
+        local aim = tRoot.Position + camCF.RightVector * LockOn.CameraOffset
+        Camera.CFrame = camCF:Lerp(CFrame.lookAt(camCF.Position, aim), LockOn.LerpFactor)
+    end
+    if LockOn.UseCharacter then
+        local state = MyHum:GetState()
+        if state == PHYSICS_STATE or state == PLATFORM_STATE then
+            if not MyHum.AutoRotate then MyHum.AutoRotate = true end
+        else
+            if MyHum.AutoRotate then MyHum.AutoRotate = false end
+            local myPos, tp = MyRoot.Position, tRoot.Position
+            MyRoot.CFrame = CFrame.lookAt(myPos, Vector3.new(tp.X, myPos.Y, tp.Z))
+        end
+    end
+end
+
+local function enableLockOn(target)
+    local root = target:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+    LockOn.Target, LockOn.TargetRoot, LockOn.Enabled = target, root, true
+    Highlight.Adornee = target
+    Highlight.Enabled = true
+    if LockOn.UseCamera then
+        Camera.CameraType = Enum.CameraType.Track
+        UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+    end
+    if MyHum and LockOn.UseCharacter then MyHum.AutoRotate = false end
+    RunService:BindToRenderStep("LockOnSystemRender", Enum.RenderPriority.Camera.Value + 1, onRenderStep)
+    return true
+end
+
+function disableLockOn(syncToggle)
+    if not LockOn.Enabled then
+        if syncToggle and LockToggle and LockToggle.Value then LockToggle:SetValue(false) end
+        return
+    end
+    RunService:UnbindFromRenderStep("LockOnSystemRender")
+    LockOn.Enabled, LockOn.Target, LockOn.TargetRoot = false, nil, nil
+    Highlight.Enabled = false
+    Highlight.Adornee = nil
+    Camera.CameraType = Enum.CameraType.Custom
+    UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+    if MyHum then MyHum.AutoRotate = true end
+    if syncToggle and LockToggle and LockToggle.Value then LockToggle:SetValue(false) end
+end
+
+LockToggle = LeftGroupBox:AddToggle("LockOnTarget", {
+    Text = "Lock On (Nearest)",
+    Tooltip = "Locks camera + character rotation onto the closest valid target",
+    Default = false,
+    Callback = function(Value)
+        if Value then
+            local closest = getClosestCharacter()
+            if not closest or not enableLockOn(closest) then LockToggle:SetValue(false) end
+        else
+            disableLockOn(false)
+        end
+    end,
+})
+LockToggle:AddKeyPicker("LockOnKey", { Default = "Q", SyncToggleState = true, Mode = "Toggle", Text = "Lock On" })
+
+-- ==========================================
+-- DIVERGENT DASH CONFIG
+-- ==========================================
+local CONFIG = {
+    BehindOffset = 5.5, AlreadyBehindTolerance = 3.5,
+    FireDelay = 0.37, DashSpeed = 79, ArcSegments = 5, SideWidth = 0.65,
+    TrailLifetime = 0.35,
+    DashAnimLeft  = "rbxassetid://117223862448096",
+    DashAnimRight = "rbxassetid://75203303352791",
+    AttackAnimId  = "rbxassetid://100962226150441",
+    FacingDotThreshold = -0.6, RetryDelay = 0.04, RetryFire = true,
+    MaxRange = 90,
+}
+
+local DashEnabled = false
+
+-- cached animation objects + tracks (loaded once, no reload per dash)
+local animCache = {}
+local function getTrack(key, id)
+    if not MyAnimator then return nil end
+    local entry = animCache[key]
+    if not entry or entry.animator ~= MyAnimator then
+        local anim = Instance.new("Animation")
+        anim.AnimationId = id
+        entry = { animator = MyAnimator, track = MyAnimator:LoadAnimation(anim) }
+        entry.track.Priority = Enum.AnimationPriority.Action
+        animCache[key] = entry
+    end
+    return entry.track
+end
+
+local function playDash(direction, duration)
+    local track = getTrack(direction, direction == "Left" and CONFIG.DashAnimLeft or CONFIG.DashAnimRight)
+    if not track then return nil end
+    track:Play()
+    task.delay(duration + 0.05, function() if track.IsPlaying then track:Stop(0.15) end end)
+    return track
+end
+
+local function playAttack()
+    local track = getTrack("Attack", CONFIG.AttackAnimId)
+    if not track then return end
+    track:Play()
+    task.delay(1.113, function() if track.IsPlaying then track:Stop() end end)
+end
+
+-- trail parts reused instead of recreated
+local trailA0, trailA1, trailObj
+local function createTrail(root)
+    if not trailObj or trailObj.Parent ~= root then
+        if trailObj then trailObj:Destroy() end
+        if trailA0 then trailA0:Destroy() end
+        if trailA1 then trailA1:Destroy() end
+        trailA0 = Instance.new("Attachment", root)
+        trailA1 = Instance.new("Attachment", root)
+        trailA1.Position = Vector3.new(0, 2, 0)
+        trailObj = Instance.new("Trail", root)
+        trailObj.Attachment0, trailObj.Attachment1 = trailA0, trailA1
+        trailObj.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255))
+        trailObj.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.4), NumberSequenceKeypoint.new(1, 1),
+        })
+        trailObj.Lifetime, trailObj.MinLength, trailObj.FaceCamera = CONFIG.TrailLifetime, 0, true
+    end
+    trailObj.Enabled = true
+    task.delay(CONFIG.TrailLifetime + 0.1, function()
+        if trailObj then trailObj.Enabled = false end
+    end)
+end
+
+local function isTargetFacingAway(targetRoot)
+    if not MyRoot or not targetRoot or not targetRoot.Parent then return false end
+    local toPlayer = MyRoot.Position - targetRoot.Position
+    if toPlayer.Magnitude < 0.01 then return false end
+    return targetRoot.CFrame.LookVector:Dot(toPlayer.Unit) < CONFIG.FacingDotThreshold
+end
+
+local ARC = {
+    { 0.10, 0.50 }, { 0.30, 0.80 }, { 0.55, 0.70 }, { 0.75, 0.40 }, { 1.00, 0 },
+}
+
+local function performCurvedDash(targetRoot)
+    if not MyRoot then return end
+    local myPos   = MyRoot.Position
+    local destPos = (targetRoot.CFrame * CFrame.new(0, 0, CONFIG.BehindOffset)).Position
+
+    if (myPos - destPos).Magnitude < CONFIG.AlreadyBehindTolerance then
+        playAttack(); return
+    end
+
+    local delta = destPos - myPos
+    local dist  = delta.Magnitude
+    if dist < 0.5 then return end
+
+    local dir  = delta / dist
+    local side = dir:Cross(Vector3.yAxis).Unit
+    local isLeft = math.random(1, 2) == 2
+    if isLeft then side = -side end
+
+    local waypoints, n = {}, math.min(CONFIG.ArcSegments, #ARC)
+    for i = 1, n do
+        waypoints[i] = myPos + dir * dist * ARC[i][1] + side * dist * (CONFIG.SideWidth * ARC[i][2])
+    end
+
+    local totalTime = math.max(dist / CONFIG.DashSpeed, 0.08)
+    local segTime   = totalTime / n
+
+    createTrail(MyRoot)
+    local dashTrack = playDash(isLeft and "Left" or "Right", totalTime)
+
+    local info = TweenInfo.new(segTime, Enum.EasingStyle.Linear)
+    for i = 1, n do
+        local wp = waypoints[i]
+        local lookDir = (i < n) and (waypoints[i + 1] - wp).Unit or (targetRoot.Position - wp).Unit
+        TweenService:Create(MyRoot, info, { CFrame = CFrame.new(wp, wp + lookDir) }):Play()
+        task.wait(segTime)
+    end
+
+    MyRoot.CFrame = CFrame.lookAt(destPos, targetRoot.Position)
+    if dashTrack and dashTrack.IsPlaying then dashTrack:Stop(0.1) end
+    playAttack()
+end
+
+-- ==========================================
+-- FLAGS
+-- ==========================================
+local SwapEnabled = false
+local SWAP_DELAY  = 0.52
+local COOLDOWN    = 0.15
+local canFire     = true
+
+local dashCooling, dashRetrying = false, false
+
+-- ==========================================
+-- SINGLE MERGED NAMECALL HOOK
+-- ==========================================
+local oldNamecall
+oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+    -- fast path
+    if (self ~= DivergentEvent and self ~= TodoRight)
+        or (not DashEnabled and not SwapEnabled)
+        or getnamecallmethod() ~= "FireServer" then
+        return oldNamecall(self, ...)
+    end
+
+    if self == DivergentEvent then
+        if not DashEnabled or dashRetrying or dashCooling or checkcaller() then
+            return oldNamecall(self, ...)
+        end
+        dashCooling = true
+
+        local result = oldNamecall(self, ...)
+        local args   = table.pack(...)
+        local target = getClosestCharacter(CONFIG.MaxRange)
+        local targetRoot = target and target.HumanoidRootPart
+
+        task.delay(CONFIG.FireDelay, function()
+            if targetRoot and targetRoot.Parent and not isTargetFacingAway(targetRoot) then
+                if ReturnSkill then pcall(function() ReturnSkill:FireServer() end) end
+                task.spawn(function()
+                    task.wait(CONFIG.RetryDelay)
+                    if not targetRoot.Parent then
+                        task.defer(function() dashCooling = false end); return
+                    end
+                    performCurvedDash(targetRoot)
+                    local shouldRetryFire = (_G.retryfire ~= nil) and _G.retryfire or CONFIG.RetryFire
+                    if isTargetFacingAway(targetRoot) and shouldRetryFire then
+                        dashRetrying = true
+                        pcall(function() DivergentEvent:FireServer(table.unpack(args, 1, args.n)) end)
+                        task.wait(CONFIG.FireDelay)
+                        pcall(function() DivergentEvent:FireServer(table.unpack(args, 1, args.n)) end)
+                        dashRetrying = false
+                    end
+                    task.defer(function() dashCooling = false end)
+                end)
+            else
+                dashRetrying = true
+                pcall(function() DivergentEvent:FireServer(table.unpack(args, 1, args.n)) end)
+                dashRetrying = false
+                task.defer(function() dashCooling = false end)
+            end
+        end)
+
+        if targetRoot then
+            task.spawn(function()
+                if targetRoot.Parent then performCurvedDash(targetRoot) end
+            end)
+        end
+        return result
+    end
+
+    -- self == TodoRight
+    local result = oldNamecall(self, ...)
+    if SwapEnabled and canFire and not checkcaller() then
+        canFire = false
+        task.delay(SWAP_DELAY, function()
+            TodoActivated:FireServer(false)
+            task.delay(COOLDOWN, function() canFire = true end)
+        end)
+    end
+    return result
+end))
+
+-- ==========================================
+-- DASH TOGGLES
+-- ==========================================
+DashGroupBox:AddToggle("DivergentDash", {
+    Text = "Divergent Dash (Back Hit)",
+    Tooltip = "Curves behind the nearest enemy when you use Divergent Fist",
+    Default = false,
+    Callback = function(Value)
+        DashEnabled = Value
+        dashCooling, dashRetrying = false, false
+    end,
+})
+
+DashGroupBox:AddToggle("RetryFire", {
+    Text = "Retry Fire",
+    Default = CONFIG.RetryFire,
+    Callback = function(Value) CONFIG.RetryFire = Value; _G.retryfire = Value end,
+})
+
+DashGroupBox:AddSlider("DashSpeed", {
+    Text = "Dash Speed", Default = CONFIG.DashSpeed, Min = 40, Max = 140, Rounding = 0,
+    Callback = function(Value) CONFIG.DashSpeed = Value end,
+})
+
+DashGroupBox:AddSlider("FireDelay", {
+    Text = "Fire Delay", Default = CONFIG.FireDelay, Min = 0.10, Max = 0.80,
+    Rounding = 2, Suffix = "s",
+    Callback = function(Value) CONFIG.FireDelay = Value end,
+})
+
+DashGroupBox:AddSlider("BehindOffset", {
+    Text = "Behind Offset", Default = CONFIG.BehindOffset, Min = 2, Max = 10,
+    Rounding = 1,
+    Callback = function(Value) CONFIG.BehindOffset = Value end,
+})
+
+-- ==========================================
+-- AUTO NANAMI RATIO
+-- ==========================================
+local effectConnection
+LeftGroupBox:AddToggle("AutoNanamiRatio", {
+    Text = "Auto Nanami Ratio",
+    Default = false,
+    Callback = function(Value)
+        if Value then
+            if effectConnection then return end
+            effectConnection = NanamiEffects.OnClientEvent:Connect(function(kind, plr, _, _, _, dur)
+                if kind ~= "SpawnRatio" or plr ~= LocalPlayer then return end
+                local delayTime = dur * 0.5676767676767677 - LocalPlayer:GetNetworkPing()
+                if delayTime > 0 then
+                    task.delay(delayTime, function() NanamiRight:FireServer() end)
+                else
+                    NanamiRight:FireServer()
+                end
+            end)
+        elseif effectConnection then
+            effectConnection:Disconnect(); effectConnection = nil
+        end
+    end,
+})
+
+-- ==========================================
+-- TODO PERFECT SWAP
+-- ==========================================
+RightGroupBox:AddToggle("PerfectSwap", {
+    Text = "Perfect Swap",
+    Tooltip = "Auto-fires Activated after a right-click swap",
+    Default = false,
+    Callback = function(Value) SwapEnabled = Value; canFire = true end,
+}):AddKeyPicker("PerfectSwapKey", {
+    Default = "R", SyncToggleState = true, Mode = "Toggle", Text = "Perfect Swap",
+})
+
+RightGroupBox:AddSlider("SwapDelay", {
+    Text = "Swap Delay", Default = SWAP_DELAY, Min = 0.30, Max = 0.90,
+    Rounding = 2, Suffix = "s",
+    Callback = function(Value) SWAP_DELAY = Value end,
+})
+
+-- ==========================================
+-- RESPAWN
+-- ==========================================
+LocalPlayer.CharacterAdded:Connect(function(char)
+    disableLockOn(true)
+    bindCharacter(char)
+    canFire = true
+    dashCooling, dashRetrying = false, false
+    table.clear(animCache)
+    trailObj, trailA0, trailA1 = nil, nil, nil
+end)
+
+SaveManager:LoadAutoloadConfig()
