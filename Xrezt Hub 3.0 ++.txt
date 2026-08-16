@@ -1,3 +1,18 @@
+local Onyx = loadstring(game:HttpGet("https://cdn.jnkie.com/OnyxUI.lua"))()
+
+Onyx.Appearance = {
+    Title           = "Xrezt Hub Key System",
+    Subtitle        = "Enter your key to continue",
+    KeylessTitle    = "Onyx",
+    KeylessSubtitle = "No key required for this build - you're verified.",
+    Icon            = "",   -- optional rbxassetid:// shown left of the wordmark
+}
+
+Onyx.Links.Discord = "https://discord.gg/gZfWGJMRKd"
+Onyx.Storage.FileName = "XreztHuRb_Key"
+-- Onyx.Options.KeylessUi = "false"
+
+
 -- Xrezt Hub | Obsidian | optimized merge
 local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Obsidian/refs/heads/main/Library.lua"))()
 
