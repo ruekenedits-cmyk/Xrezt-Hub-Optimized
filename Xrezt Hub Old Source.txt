@@ -1,0 +1,54 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Event = ReplicatedStorage.Knit.Knit.Services.DivergentFistService.RE.Activated
+
+local BlackFlashEnabled = false
+local isAutoFiring = false
+
+-- Obsidian UI
+local ObsidianLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/deadly0sss/ObsidianLib/main/Library.lua"))()
+local Toggles = ObsidianLib.Toggles
+local Options = ObsidianLib.Options
+
+local function fireDivergentFist()
+    local character = Players.LocalPlayer.Character
+    if not character then return end
+
+    local moveset = character:FindFirstChild("Moveset")
+    if not moveset then return end
+
+    local move = moveset:FindFirstChild("Divergent Fist")
+    if not move then return end
+
+    Event:FireServer(move, nil)
+end
+
+-- Hook the original remote fire so we detect when YOU press Divergent Fist
+local oldNamecall
+oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+    local method = getnamecallmethod()
+
+    if not checkcaller() and method == "FireServer" and self == Event then
+        if BlackFlashEnabled and not isAutoFiring then
+            task.spawn(function()
+                task.wait(0.275)
+                isAutoFiring = true
+                fireDivergentFist()
+                isAutoFiring = false
+            end)
+        end
+    end
+
+    return oldNamecall(self, ...)
+end)
+
+-- Obsidian UI Toggle (place inside your existing script where `Tab` is defined)
+Toggles.BlackFlashToggle = Tab:AddToggle("BlackFlashToggle", {
+    Title = "Black Flash",
+    Default = false,
+})
+
+Toggles.BlackFlashToggle:OnChanged(function(Value)
+    BlackFlashEnabled = Value
+end)
